@@ -1,6 +1,11 @@
 """ネガティブ・チャーン & LTV向上の説得ロジック — ピッチ資料生成スクリプト
 
 python-pptx で 16:9 / 全7スライドの .pptx を生成する。
+トヨマネスタイル：
+  - 色は3色のみ（濃紺・青・グレー）＋白背景
+  - 各スライドのタイトルは「結論（メッセージ）」を1文で書く
+  - 影・グラデーション・装飾は使わず、表と枠で情報を整理する
+
     pip install python-pptx
     python generate_pitch_deck.py
 """
@@ -17,27 +22,23 @@ from pptx.util import Inches, Pt
 
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT = BASE_DIR / "pitch_deck_negative_churn.pptx"
-LOGO_ON_DARK = BASE_DIR / "assets" / "taxel_logo_dark.png"
-LOGO_ON_LIGHT = BASE_DIR / "assets" / "taxel_logo_light.png"
+LOGO = BASE_DIR / "assets" / "taxel_logo_light.png"
 
-# ---- カラーパレット ----
-NAVY = RGBColor(0x0F, 0x17, 0x2A)
+# ---- 3色のみ（背景・白抜き文字の白は除く） ----
+NAVY = RGBColor(0x0F, 0x17, 0x2A)   # 本文・主要要素
+BLUE = RGBColor(0x25, 0x63, 0xEB)   # 強調（結論・キーワードのみ）
+GRAY = RGBColor(0xE2, 0xE8, 0xF0)   # 枠・面・区切り
 WHITE = RGBColor(0xFF, 0xFF, 0xFF)
-BLUE = RGBColor(0x25, 0x63, 0xEB)
-CARD = RGBColor(0xF8, 0xFA, 0xFC)
-BORDER = RGBColor(0xE2, 0xE8, 0xF0)
-MUTED = RGBColor(0x64, 0x74, 0x8B)
-PALE_BLUE = RGBColor(0xDB, 0xEA, 0xFE)
-NAVY_CARD = RGBColor(0x1E, 0x29, 0x3B)
-DARK_MUTED = RGBColor(0x94, 0xA3, 0xB8)
 
-FONT = "Meiryo"
+FONT = "游ゴシック"
 SLIDE_W, SLIDE_H = 13.333, 7.5
 MARGIN = 0.6
+CONTENT_W = SLIDE_W - 2 * MARGIN
+BODY_TOP = 1.95
 
 
 # ---------------------------------------------------------------- helpers
-def set_font(run, size, color, bold=False):
+def set_font(run, size, color=NAVY, bold=False):
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.color.rgb = color
@@ -51,11 +52,8 @@ def set_font(run, size, color, bold=False):
         el.set("typeface", FONT)
 
 
-def text(slide, x, y, w, h, lines, size=16, color=NAVY, bold=False,
-         align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, spacing=1.15):
-    """lines: str または [(text, size, color, bold), ...] / 文字列のリスト"""
-    box = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
-    tf = box.text_frame
+def fill_text(tf, lines, size, color, bold, align, anchor, spacing=1.2):
+    """lines: str / [str | (text, size, color, bold)]。1要素＝1段落"""
     tf.word_wrap = True
     tf.vertical_anchor = anchor
     tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
@@ -65,285 +63,266 @@ def text(slide, x, y, w, h, lines, size=16, color=NAVY, bold=False,
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
         p.alignment = align
         p.line_spacing = spacing
-        if isinstance(line, tuple):
-            t, s, c, b = line
-        else:
-            t, s, c, b = line, size, color, bold
+        t, s, c, b = line if isinstance(line, tuple) else (line, size, color, bold)
         run = p.add_run()
         run.text = t
         set_font(run, s, c, b)
-    return box
 
 
-def rect(slide, x, y, w, h, fill, line=None, rounded=True, radius=0.08):
-    shape = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE if rounded else MSO_SHAPE.RECTANGLE,
-        Inches(x), Inches(y), Inches(w), Inches(h))
-    if rounded:
-        shape.adjustments[0] = radius
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = fill
-    if line is None:
-        shape.line.fill.background()
+def text(slide, x, y, w, h, lines, size=16, color=NAVY, bold=False,
+         align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP):
+    tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    fill_text(tb.text_frame, lines, size, color, bold, align, anchor)
+    return tb
+
+
+def _flat(shape):
+    """テーマ由来の影・効果を持たないフラットな図形にする"""
+    style = shape._element.find(qn("p:style"))
+    if style is not None:
+        shape._element.remove(style)
+
+
+def box(slide, x, y, w, h, fill=None, line=None, lines=None, size=14, color=NAVY,
+        bold=False, align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.MIDDLE, pad=0.2,
+        shape=MSO_SHAPE.RECTANGLE):
+    sp = slide.shapes.add_shape(shape, Inches(x), Inches(y), Inches(w), Inches(h))
+    _flat(sp)
+    if fill is None:
+        sp.fill.background()
     else:
-        shape.line.color.rgb = line
-        shape.line.width = Pt(1)
-    shape.shadow.inherit = False
-    return shape
+        sp.fill.solid()
+        sp.fill.fore_color.rgb = fill
+    if line is None:
+        sp.line.fill.background()
+    else:
+        sp.line.color.rgb = line
+        sp.line.width = Pt(1.25)
+    if lines is not None:
+        fill_text(sp.text_frame, lines, size, color, bold, align, anchor)
+        tf = sp.text_frame
+        tf.margin_left = tf.margin_right = Inches(pad)
+    return sp
 
 
-def badge(slide, x, y, d, label, fill=BLUE, color=WHITE, size=14):
-    circle = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x), Inches(y), Inches(d), Inches(d))
-    circle.fill.solid()
-    circle.fill.fore_color.rgb = fill
-    circle.line.fill.background()
-    circle.shadow.inherit = False
-    tf = circle.text_frame
-    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.CENTER
-    run = p.add_run()
-    run.text = label
-    set_font(run, size, color, True)
-    return circle
+def chevron(slide, x, y, w=0.28, h=0.4, fill=NAVY):
+    """ステップ間の矢印（右向き三角）"""
+    sp = slide.shapes.add_shape(MSO_SHAPE.ISOSCELES_TRIANGLE, Inches(x), Inches(y),
+                                Inches(h), Inches(w))
+    sp.rotation = 90
+    _flat(sp)
+    sp.fill.solid()
+    sp.fill.fore_color.rgb = fill
+    sp.line.fill.background()
+    return sp
 
 
-def arrow(slide, x, y, w, h, fill=BLUE):
-    shape = slide.shapes.add_shape(MSO_SHAPE.RIGHT_ARROW, Inches(x), Inches(y), Inches(w), Inches(h))
-    shape.fill.solid()
-    shape.fill.fore_color.rgb = fill
-    shape.line.fill.background()
-    shape.shadow.inherit = False
-    return shape
+def hline(slide, x1, y, x2, color=GRAY, weight=1.25):
+    ln = slide.shapes.add_connector(1, Inches(x1), Inches(y), Inches(x2), Inches(y))
+    _flat(ln)
+    ln.line.color.rgb = color
+    ln.line.width = Pt(weight)
+    return ln
 
 
-def background(slide, color):
-    fill = slide.background.fill
-    fill.solid()
-    fill.fore_color.rgb = color
+def header(slide, n, label, message, size=24):
+    """左上：資料上の位置づけ（ラベル）／タイトル：結論メッセージ"""
+    text(slide, MARGIN, 0.45, 10.4, 0.3, label, size=12, color=BLUE, bold=True)
+    text(slide, MARGIN, 0.8, 10.8, 0.9, message, size=size, bold=True)
+    if LOGO.exists():
+        slide.shapes.add_picture(str(LOGO), Inches(SLIDE_W - MARGIN - 1.3), Inches(0.45),
+                                 height=Inches(0.36))
+    hline(slide, MARGIN, SLIDE_H - 0.55, SLIDE_W - MARGIN)
+    text(slide, MARGIN, SLIDE_H - 0.45, 6, 0.25, "taXel｜投資家向け補足資料", size=9)
+    text(slide, SLIDE_W - MARGIN - 0.5, SLIDE_H - 0.45, 0.5, 0.25, str(n), size=9,
+         align=PP_ALIGN.RIGHT)
 
 
-def logo(slide, path, x, y, h):
-    if path.exists():
-        slide.shapes.add_picture(str(path), Inches(x), Inches(y), height=Inches(h))
+def point(slide, y, message, h=0.7):
+    """スライド下部の結論ボックス（濃紺・白抜き）"""
+    box(slide, MARGIN, y, 1.3, h, fill=BLUE, lines="結論", size=14, color=WHITE, bold=True,
+        align=PP_ALIGN.CENTER)
+    box(slide, MARGIN + 1.3, y, CONTENT_W - 1.3, h, fill=NAVY, lines=message, size=17,
+        color=WHITE, bold=True, pad=0.3)
 
 
-def page_number(slide, n, color=MUTED):
-    text(slide, SLIDE_W - MARGIN - 0.5, SLIDE_H - 0.45, 0.5, 0.25, str(n),
-         size=10, color=color, align=PP_ALIGN.RIGHT)
-
-
-def content_header(slide, n, kicker, title, size=28):
-    """ライトスライド共通ヘッダー：キッカー＋タイトル＋右上ロゴ"""
-    background(slide, WHITE)
-    text(slide, MARGIN, 0.45, 9.5, 0.3, kicker, size=12, color=BLUE, bold=True)
-    text(slide, MARGIN, 0.78, 10.6, 0.9, title, size=size, color=NAVY, bold=True)
-    logo(slide, LOGO_ON_LIGHT, SLIDE_W - MARGIN - 1.45, 0.45, 0.4)
-    page_number(slide, n)
+def table(slide, x, y, col_w, row_h, rows, size=14, highlight_col=None):
+    """rows[0] はヘッダー。セルは枠線グレーのフラットな矩形で描く"""
+    for r, row in enumerate(rows):
+        cx = x
+        for c, cell in enumerate(row):
+            if r == 0:
+                fill, color, bold = (BLUE if c == highlight_col else NAVY), WHITE, True
+            elif c == 0:
+                fill, color, bold = GRAY, NAVY, True
+            elif c == highlight_col:
+                fill, color, bold = WHITE, BLUE, True
+            else:
+                fill, color, bold = WHITE, NAVY, False
+            box(slide, cx, y + r * row_h, col_w[c], row_h, fill=fill, line=GRAY, lines=cell,
+                size=size, color=color, bold=bold)
+            cx += col_w[c]
 
 
 def new_slide(prs):
-    return prs.slides.add_slide(prs.slide_layouts[6])  # Blank
+    s = prs.slides.add_slide(prs.slide_layouts[6])  # Blank
+    s.background.fill.solid()
+    s.background.fill.fore_color.rgb = WHITE
+    return s
 
 
 # ---------------------------------------------------------------- slides
 def slide1_title(prs):
     s = new_slide(prs)
-    background(s, NAVY)
-    logo(s, LOGO_ON_DARK, MARGIN + 0.1, 0.6, 0.62)
-    text(s, MARGIN + 0.1, 2.05, 11, 0.35, "INVESTOR BRIEFING ｜ UNIT ECONOMICS",
-         size=13, color=BLUE, bold=True)
-    text(s, MARGIN + 0.1, 2.5, 12.1, 1.1, "ネガティブ・チャーン & LTV向上の説得ロジック",
-         size=34, color=WHITE, bold=True)
-    text(s, MARGIN + 0.1, 3.6, 11, 0.5, "税理士チャネルが生む「構造的な」収益拡大の4つの根拠",
-         size=18, color=DARK_MUTED)
+    if LOGO.exists():
+        s.shapes.add_picture(str(LOGO), Inches(MARGIN), Inches(0.6), height=Inches(0.55))
+    text(s, MARGIN, 2.0, 11, 0.35, "投資家向け補足資料｜ユニットエコノミクス", size=14,
+         color=BLUE, bold=True)
+    text(s, MARGIN, 2.45, CONTENT_W, 1.0, "ネガティブ・チャーン & LTV向上の説得ロジック",
+         size=36, bold=True)
+    text(s, MARGIN, 3.45, CONTENT_W, 0.5,
+         "税理士チャネルが生む「構造的な」収益拡大を4つの軸で証明", size=18)
 
     axes = ["構造的クロスセル", "スイッチングコスト", "LTV / CAC 拡大", "シナリオ分析"]
-    w, gap, y = 2.85, 0.2, 5.15
+    gap = 0.2
+    w = (CONTENT_W - 3 * gap) / 4
     for i, label in enumerate(axes):
-        x = MARGIN + 0.1 + i * (w + gap)
-        rect(s, x, y, w, 0.9, NAVY_CARD)
-        badge(s, x + 0.2, y + 0.2, 0.5, str(i + 1), size=14)
-        text(s, x + 0.85, y, w - 0.95, 0.9, label, size=14, color=WHITE, bold=True,
-             anchor=MSO_ANCHOR.MIDDLE)
-    text(s, MARGIN + 0.1, 6.65, 8, 0.3, "taXel（タクセル）｜ 投資家向け補足資料 ｜ 2026年9月",
-         size=11, color=DARK_MUTED)
+        x = MARGIN + i * (w + gap)
+        box(s, x, 4.9, 0.6, 0.8, fill=NAVY, lines=f"{i + 1}", size=20, color=WHITE,
+            bold=True, align=PP_ALIGN.CENTER)
+        box(s, x + 0.6, 4.9, w - 0.6, 0.8, fill=GRAY, lines=label, size=14, bold=True,
+            pad=0.15)
+    hline(s, MARGIN, SLIDE_H - 0.55, SLIDE_W - MARGIN)
+    text(s, MARGIN, SLIDE_H - 0.45, 8, 0.25, "taXel（タクセル）｜2026年9月", size=9)
 
 
 def slide2_overview(prs):
     s = new_slide(prs)
-    content_header(s, 2, "OVERVIEW", "投資家が求める「Why & How」の証明")
+    header(s, 2, "概要｜投資家が求める「Why & How」の証明",
+           "ネガティブ・チャーンは「期待」ではなく「構造」で説明できる")
 
-    # 投資家の問い
-    rect(s, MARGIN, 1.85, SLIDE_W - 2 * MARGIN, 0.85, PALE_BLUE)
-    text(s, MARGIN + 0.35, 1.85, 1.6, 0.85, "投資家の問い", size=14, color=BLUE, bold=True,
-         anchor=MSO_ANCHOR.MIDDLE)
-    text(s, MARGIN + 2.0, 1.85, 9.8, 0.85,
-         "なぜ解約が起きても、既存顧客からの売上は伸び続けるのか？",
-         size=18, color=NAVY, bold=True, anchor=MSO_ANCHOR.MIDDLE)
-
-    cards = [
-        ("HOW", "構造的クロスセル", "税理士経由で利用プロダクト数が拡大"),
-        ("WHY", "スイッチングコスト", "業務インフラ化＋税理士CSで高定着"),
-        ("PROOF", "LTV / CAC 拡大", "初年度3倍 → 3年目6倍以上"),
-        ("RISK", "シナリオ分析", "保守的な下限とアップサイドを両提示"),
+    box(s, MARGIN, BODY_TOP, CONTENT_W, 0.65, fill=GRAY, pad=0.3,
+        lines=[("投資家の問い：なぜ解約が起きても、既存顧客からの売上は伸び続けるのか？",
+                17, NAVY, True)])
+    rows = [
+        ["軸", "問い", "答え（要点）"],
+        ["1  構造的クロスセル", "How：どう伸びるか", "税理士経由で利用プロダクト数が拡大"],
+        ["2  スイッチングコスト", "Why：なぜ辞めないか", "業務インフラ化 ＋ 税理士によるCS"],
+        ["3  LTV / CAC", "Proof：数字で示せるか", "初年度3倍 → 3年目6倍以上"],
+        ["4  シナリオ分析", "Risk：下振れ時は", "保守的な下限とアップサイドを両提示"],
     ]
-    w, gap, y, h = 2.85, 0.2, 3.05, 2.55
-    for i, (tag, title, body) in enumerate(cards):
-        x = MARGIN + i * (w + gap)
-        rect(s, x, y, w, h, CARD, line=BORDER)
-        badge(s, x + 0.3, y + 0.3, 0.6, f"{i + 1}", size=16)
-        text(s, x + 1.05, y + 0.3, 1.6, 0.6, f"軸{i + 1} ｜ {tag}", size=12, color=BLUE, bold=True,
-             anchor=MSO_ANCHOR.MIDDLE)
-        text(s, x + 0.3, y + 1.1, w - 0.6, 0.45, title, size=16, bold=True)
-        text(s, x + 0.3, y + 1.6, w - 0.6, 0.8, body, size=13, color=MUTED)
-
-    text(s, MARGIN, 6.0, SLIDE_W - 2 * MARGIN, 0.5,
-         [("ネガティブ・チャーンは「期待値」ではなく「構造」から生まれる", 18, NAVY, True)],
-         align=PP_ALIGN.CENTER)
+    table(s, MARGIN, BODY_TOP + 0.95, [3.4, 3.4, CONTENT_W - 6.8], 0.6, rows, size=15,
+          highlight_col=2)
+    point(s, 5.95, "4軸すべてが「税理士チャネル」という1つの構造から生まれる")
 
 
 def slide3_crosssell(prs):
     s = new_slide(prs)
-    content_header(s, 3, "軸1 ｜ HOW",
-                   "構造的なクロスセルの仕組み（税理士チャネルの横展開）")
+    header(s, 3, "軸1｜構造的なクロスセルの仕組み（税理士チャネルの横展開）",
+           "1事務所の獲得が、同一税理士経由のクロスセルへ連鎖する")
 
-    # フロー：4ステップ
-    steps = [
-        ("税理士事務所を獲得", "チャネルの起点"),
-        ("1プロダクトで導入", "小さく始める"),
-        ("信頼関係の構築", "運用実績が蓄積"),
-        ("他プロダクトへ展開", "同一税理士経由"),
-    ]
-    gap, y, h = 0.52, 1.95, 1.45
-    w = (SLIDE_W - 2 * MARGIN - 3 * gap) / 4
-    for i, (title, sub) in enumerate(steps):
+    steps = [("STEP 1", "税理士事務所を獲得"), ("STEP 2", "1プロダクトで導入"),
+             ("STEP 3", "信頼関係の構築"), ("STEP 4", "他プロダクトへ展開")]
+    gap = 0.5
+    w = (CONTENT_W - 3 * gap) / 4
+    for i, (st, t) in enumerate(steps):
         x = MARGIN + i * (w + gap)
         last = i == len(steps) - 1
-        rect(s, x, y, w, h, BLUE if last else CARD, line=None if last else BORDER)
-        text(s, x + 0.25, y + 0.22, w - 0.5, 0.3, f"STEP {i + 1}", size=11,
-             color=WHITE if last else BLUE, bold=True)
-        text(s, x + 0.25, y + 0.55, w - 0.5, 0.45, title, size=16,
-             color=WHITE if last else NAVY, bold=True)
-        text(s, x + 0.25, y + 0.98, w - 0.5, 0.3, sub, size=12,
-             color=PALE_BLUE if last else MUTED)
+        box(s, x, BODY_TOP, w, 1.0, fill=BLUE if last else GRAY, pad=0.25,
+            lines=[(st, 11, WHITE if last else BLUE, True),
+                   (t, 16, WHITE if last else NAVY, True)])
         if not last:
-            arrow(s, x + w + 0.1, y + h / 2 - 0.16, 0.32, 0.32)
+            chevron(s, x + w + 0.1, BODY_TOP + 0.36)
 
-    # 下段左：1税理士あたりのプロダクト拡大イメージ（積み上げブロック）
-    px, py, pw, ph = MARGIN, 3.8, 6.4, 2.95
-    rect(s, px, py, pw, ph, CARD, line=BORDER)
-    text(s, px + 0.3, py + 0.2, pw - 0.6, 0.3, "1税理士あたり利用プロダクト数（イメージ）",
-         size=13, bold=True)
-    years = ["1年目", "2年目", "3年目"]
-    products = ["プロダクトA", "＋プロダクトB", "＋プロダクトC"]
-    shades = [BLUE, RGBColor(0x60, 0x8F, 0xF2), RGBColor(0x93, 0xB4, 0xF7)]
-    col_w, base_y, blk_h = 1.45, py + ph - 0.55, 0.52
-    for i, yr in enumerate(years):
-        cx = px + 0.55 + i * (col_w + 0.45)
+    # 左：プロダクト数の積み上げ（イメージ）
+    py, lw, ph = 3.3, 6.2, 2.35
+    box(s, MARGIN, py, lw, ph, line=GRAY)
+    text(s, MARGIN + 0.25, py + 0.15, lw - 0.5, 0.3, "1税理士あたり利用プロダクト数（イメージ）",
+         size=12, bold=True)
+    names = ["プロダクトA", "＋プロダクトB", "＋プロダクトC"]
+    fills = [NAVY, BLUE, GRAY]
+    colors = [WHITE, WHITE, NAVY]
+    cw, bh, base = 1.5, 0.4, py + ph - 0.45
+    for i, yr in enumerate(["1年目", "2年目", "3年目"]):
+        cx = MARGIN + 0.45 + i * (cw + 0.45)
         for j in range(i + 1):
-            b = rect(s, cx, base_y - (j + 1) * (blk_h + 0.06), col_w, blk_h, shades[j], radius=0.12)
-            tf = b.text_frame
-            tf.margin_left = tf.margin_right = 0
-            p = tf.paragraphs[0]
-            p.alignment = PP_ALIGN.CENTER
-            r = p.add_run()
-            r.text = products[j].lstrip("＋") if j == 0 else products[j]
-            set_font(r, 11, WHITE, True)
-        text(s, cx, base_y + 0.1, col_w, 0.3, yr, size=12, color=MUTED, align=PP_ALIGN.CENTER)
+            box(s, cx, base - (j + 1) * (bh + 0.04), cw, bh, fill=fills[j], lines=names[j],
+                size=11, color=colors[j], bold=True, align=PP_ALIGN.CENTER, pad=0.05)
+        text(s, cx, base + 0.08, cw, 0.3, yr, size=11, align=PP_ALIGN.CENTER)
 
-    # 下段右：結論
-    rx, rw = px + pw + 0.35, SLIDE_W - MARGIN - (px + pw + 0.35)
-    rect(s, rx, py, rw, 1.3, CARD, line=BORDER)
-    text(s, rx + 0.3, py + 0.2, rw - 0.6, 0.3, "単一プロダクトの解約", size=13, color=MUTED, bold=True)
-    text(s, rx + 0.3, py + 0.55, rw - 0.6, 0.6, "発生しても影響は限定的", size=18, bold=True)
-    rect(s, rx, py + 1.5, rw, 1.45, NAVY)
-    text(s, rx + 0.3, py + 1.68, rw - 0.6, 0.3, "1税理士あたり ARPU・利用プロダクト数",
-         size=13, color=DARK_MUTED, bold=True)
-    text(s, rx + 0.3, py + 2.02, rw - 0.6, 0.4, "年々拡大", size=20, color=WHITE, bold=True)
-    text(s, rx + 0.3, py + 2.45, rw - 0.6, 0.45, "＝ 全体でネガティブ・チャーンを達成",
-         size=18, color=RGBColor(0x93, 0xB4, 0xF7), bold=True)
+    # 右：因果の整理
+    rx = MARGIN + lw + 0.3
+    rw = SLIDE_W - MARGIN - rx
+    rows = [["事象", "影響"],
+            ["単一プロダクトの解約", "発生しても影響は限定的"],
+            ["1税理士あたりARPU", "年々拡大"],
+            ["利用プロダクト数", "年々拡大"]]
+    table(s, rx, py, [2.5, rw - 2.5], ph / 4, rows, size=14, highlight_col=1)
+    point(s, 5.95, "拡大が解約を上回り、全体としてネガティブ・チャーンを達成")
 
 
 def slide4_switching(prs):
     s = new_slide(prs)
-    content_header(s, 4, "軸2 ｜ WHY",
-                   "スイッチングコストと高定着性の根拠")
+    header(s, 4, "軸2｜スイッチングコストと高定着性の根拠",
+           "導入6か月で業務インフラ化し、税理士CSが定着を支える")
 
-    colw, gap, y, h = 5.9, 0.33, 1.95, 4.75
-    lx, rx = MARGIN, MARGIN + colw + gap
+    colw = (CONTENT_W - 0.3) / 2
+    lx, rx = MARGIN, MARGIN + colw + 0.3
+    for x, tag, title in [(lx, "A", "業務インフラ化"), (rx, "B", "税理士によるサクセスサポート")]:
+        box(s, x, BODY_TOP, 0.6, 0.6, fill=NAVY, lines=tag, size=18, color=WHITE, bold=True,
+            align=PP_ALIGN.CENTER)
+        box(s, x + 0.6, BODY_TOP, colw - 0.6, 0.6, fill=GRAY, lines=title, size=17, bold=True)
 
-    # 左：業務インフラ化
-    rect(s, lx, y, colw, h, CARD, line=BORDER)
-    badge(s, lx + 0.35, y + 0.35, 0.6, "A", size=16)
-    text(s, lx + 1.15, y + 0.35, colw - 1.5, 0.6, "業務インフラ化", size=20, bold=True,
-         anchor=MSO_ANCHOR.MIDDLE)
-    text(s, lx + 0.35, y + 1.15, colw - 0.7, 0.35, "導入6か月超で、日常業務フローに完全定着",
-         size=14, color=MUTED)
-    # タイムライン
-    ty = y + 2.05
-    line = s.shapes.add_connector(1, Inches(lx + 0.6), Inches(ty + 0.35),
-                                  Inches(lx + colw - 0.6), Inches(ty + 0.35))
-    line.line.color.rgb = BORDER
-    line.line.width = Pt(3)
-    for label, frac, active in [("導入", 0.0, False), ("6か月", 0.5, True), ("定着", 1.0, False)]:
-        cx = lx + 0.6 + frac * (colw - 1.2)
-        badge(s, cx - 0.15, ty + 0.2, 0.3, "", fill=BLUE if active else MUTED)
-        text(s, cx - 0.7, ty - 0.2, 1.4, 0.3, label, size=12, color=BLUE if active else MUTED,
+    # A：タイムライン
+    ty = BODY_TOP + 0.85
+    x0, x1 = lx + 0.5, lx + colw - 0.5
+    hline(s, x0, ty + 0.5, x1, color=NAVY, weight=2)
+    for label, frac, emph in [("導入", 0.0, False), ("6か月", 0.5, True), ("定着", 1.0, False)]:
+        cx = x0 + frac * (x1 - x0)
+        box(s, cx - 0.12, ty + 0.38, 0.24, 0.24, fill=BLUE if emph else NAVY,
+            shape=MSO_SHAPE.OVAL)
+        text(s, cx - 0.8, ty, 1.6, 0.3, label, size=13, color=BLUE if emph else NAVY,
              bold=True, align=PP_ALIGN.CENTER)
-    chips = ["経理", "決済", "リスク管理"]
-    cw = (colw - 0.7 - 0.2 * 2) / 3
-    for i, c in enumerate(chips):
-        b = rect(s, lx + 0.35 + i * (cw + 0.2), y + 3.0, cw, 0.5, PALE_BLUE, radius=0.5)
-        tf = b.text_frame
-        p = tf.paragraphs[0]
-        p.alignment = PP_ALIGN.CENTER
-        r = p.add_run()
-        r.text = c
-        set_font(r, 13, BLUE, True)
-    text(s, lx + 0.35, y + 3.75, colw - 0.7, 0.7,
-         [("スイッチングコスト上昇 → 解約率が急減", 16, NAVY, True)])
+    text(s, lx, ty + 0.85, colw, 0.3, "日常の業務フローに完全に組み込み", size=14,
+         align=PP_ALIGN.CENTER)
+    cw = (colw - 0.4) / 3
+    for i, c in enumerate(["経理", "決済", "リスク管理"]):
+        box(s, lx + i * (cw + 0.2), ty + 1.3, cw, 0.5, line=NAVY, lines=c, size=14,
+            bold=True, align=PP_ALIGN.CENTER)
+    box(s, lx, ty + 2.05, colw, 0.55, line=BLUE,
+        lines="スイッチングコスト上昇 → 解約率が急減", size=15, color=BLUE, bold=True,
+        align=PP_ALIGN.CENTER)
 
-    # 右：税理士によるサクセスサポート
-    rect(s, rx, y, colw, h, CARD, line=BORDER)
-    badge(s, rx + 0.35, y + 0.35, 0.6, "B", size=16)
-    text(s, rx + 1.15, y + 0.35, colw - 1.5, 0.6, "税理士によるサクセスサポート", size=20,
-         bold=True, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, rx + 0.35, y + 1.15, colw - 0.7, 0.35, "顧問税理士が「実質的なCS担当」として機能",
-         size=14, color=MUTED)
-    points = [
-        ("決算・財務を把握", "顧客の状況を最も理解する立場"),
-        ("継続的に関与・提案", "定例の顧問業務の中で活用を促進"),
-        ("CSコスト抑制 × 高定着", "自社CSに依存しない定着モデル"),
-    ]
-    for i, (t, b) in enumerate(points):
-        py = y + 1.75 + i * 0.95
-        rect(s, rx + 0.35, py, colw - 0.7, 0.8, WHITE, line=BORDER)
-        text(s, rx + 0.6, py + 0.1, colw - 1.2, 0.32, t, size=14, bold=True)
-        text(s, rx + 0.6, py + 0.44, colw - 1.2, 0.3, b, size=12, color=MUTED)
+    # B：表
+    rows = [["税理士の役割", "効果"],
+            ["決算・財務を把握", "顧客状況を最も理解"],
+            ["継続的に関与・提案", "顧問業務の中で活用を促進"],
+            ["実質的なCS担当", "CSコスト抑制 × 高定着"]]
+    table(s, rx, BODY_TOP + 0.85, [2.6, colw - 2.6], 0.65, rows, size=14, highlight_col=1)
+    point(s, 5.95, "定着の仕組みがプロダクトと税理士の両面に組み込まれている")
 
 
 def slide5_unit_economics(prs):
     s = new_slide(prs)
-    content_header(s, 5, "軸3 ｜ PROOF",
-                   "ユニットエコノミクス（LTV / CAC）の拡大ストーリー")
+    header(s, 5, "軸3｜ユニットエコノミクス（LTV / CAC）の拡大ストーリー",
+           "LTV / CAC は初年度3倍から、3年目に6倍以上へ拡大する")
 
-    # 左：チャート
-    cx, cy, cw, ch = MARGIN, 1.95, 5.4, 4.75
-    rect(s, cx, cy, cw, ch, CARD, line=BORDER)
-    text(s, cx + 0.3, cy + 0.25, cw - 0.6, 0.3, "LTV / CAC 倍率", size=14, bold=True)
-    text(s, cx + 0.3, cy + 0.6, cw - 0.6, 0.3, "初年度 → 3年目（6倍以上を目標）", size=12, color=MUTED)
+    # 左：棒グラフ
+    cw, ch = 5.2, 3.7
+    box(s, MARGIN, BODY_TOP, cw, ch, line=GRAY)
+    text(s, MARGIN + 0.25, BODY_TOP + 0.15, 2.5, 0.3, "LTV / CAC 倍率", size=13, bold=True)
+    text(s, MARGIN + cw - 2.35, BODY_TOP + 0.15, 2.1, 0.3, "3年目は6倍以上", size=12,
+         color=BLUE, bold=True, align=PP_ALIGN.RIGHT)
     data = CategoryChartData()
     data.categories = ["初年度", "3年目"]
     data.add_series("LTV/CAC", (3, 6))
-    gf = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(cx + 0.3), Inches(cy + 1.0),
-                            Inches(cw - 0.6), Inches(ch - 1.25), data)
-    chart = gf.chart
+    chart = s.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(MARGIN + 0.25),
+                               Inches(BODY_TOP + 0.5), Inches(cw - 0.5), Inches(ch - 0.65),
+                               data).chart
     chart.has_legend = False
     chart.has_title = False
     plot = chart.plots[0]
-    plot.gap_width = 90
+    plot.gap_width = 100
     plot.has_data_labels = True
     dl = plot.data_labels
     dl.number_format = '0"倍"'
@@ -353,140 +332,104 @@ def slide5_unit_economics(prs):
     dl.font.bold = True
     dl.font.color.rgb = NAVY
     dl.font.name = FONT
-    series = plot.series[0]
-    series.format.fill.solid()
-    series.format.fill.fore_color.rgb = BLUE
-    pt = series.points[0]
-    pt.format.fill.solid()
-    pt.format.fill.fore_color.rgb = RGBColor(0x93, 0xB4, 0xF7)
+    ser = plot.series[0]
+    ser.format.fill.solid()
+    ser.format.fill.fore_color.rgb = BLUE
+    p0 = ser.points[0]
+    p0.format.fill.solid()
+    p0.format.fill.fore_color.rgb = NAVY
     va = chart.value_axis
     va.visible = False
     va.has_major_gridlines = False
-    va.maximum_scale = 7.5
-    va.minimum_scale = 0
+    va.minimum_scale, va.maximum_scale = 0, 7.5
     ca = chart.category_axis
     ca.tick_labels.font.size = Pt(13)
-    ca.tick_labels.font.color.rgb = MUTED
+    ca.tick_labels.font.color.rgb = NAVY
     ca.tick_labels.font.name = FONT
-    ca.format.line.color.rgb = BORDER
-    ca.has_major_gridlines = False
-    # 3年目ラベルに「以上」を補足
-    text(s, cx + cw - 2.45, cy + 1.05, 2.0, 0.3, "6倍以上へ", size=12, color=BLUE, bold=True,
-         align=PP_ALIGN.CENTER)
+    ca.format.line.color.rgb = GRAY
 
-    # 右：ドライバー
-    rx = cx + cw + 0.4
+    # 右：ドライバー表 ＋ Payback
+    rx = MARGIN + cw + 0.3
     rw = SLIDE_W - MARGIN - rx
-    text(s, rx, 1.95, rw, 0.35, "倍率を押し上げる3つのドライバー", size=14, color=BLUE, bold=True)
-    drivers = [
-        ("CAC", "税理士チャネル活用で劇的に低位"),
-        ("初期解約率", "導入初期の離脱を抑制"),
-        ("クロスセル", "1社あたりLTVを継続的に拡大"),
-    ]
-    dw = (rw - 0.4) / 3
-    for i, (t, b) in enumerate(drivers):
-        x = rx + i * (dw + 0.2)
-        rect(s, x, 2.4, dw, 1.85, CARD, line=BORDER)
-        text(s, x + 0.25, 2.6, dw - 0.5, 0.4, t, size=17, color=BLUE, bold=True)
-        text(s, x + 0.25, 3.1, dw - 0.5, 1.0, b, size=13)
-
-    # Payback
-    rect(s, rx, 4.5, rw, 2.2, NAVY)
-    text(s, rx + 0.35, 4.7, rw - 0.7, 0.3, "PAYBACK PERIOD", size=12, color=DARK_MUTED, bold=True)
-    text(s, rx + 0.35, 5.05, rw - 0.7, 0.5, "CAC回収期間が極めて短い", size=20, color=WHITE, bold=True)
-    text(s, rx + 0.35, 5.7, rw - 0.7, 0.8, "回収後の利益がストックとして積み上がる",
-         size=15, color=RGBColor(0x93, 0xB4, 0xF7), bold=True)
+    rows = [["ドライバー", "打ち手", "効果"],
+            ["CAC", "税理士チャネルの活用", "劇的に低く抑制"],
+            ["初期解約率", "導入初期の定着", "早期離脱を抑制"],
+            ["クロスセル", "同一税理士経由", "1社あたりLTV拡大"]]
+    table(s, rx, BODY_TOP, [1.8, 2.4, rw - 4.2], 0.55, rows, size=14, highlight_col=2)
+    py = BODY_TOP + 2.45
+    box(s, rx, py, 1.8, 1.25, fill=NAVY, lines=["Payback", "Period"], size=15, color=WHITE,
+        bold=True, align=PP_ALIGN.CENTER)
+    box(s, rx + 1.8, py, rw - 1.8, 1.25, line=GRAY, pad=0.3,
+        lines=[("CAC回収期間が極めて短い", 17, NAVY, True),
+               ("回収後の利益がストックとして積み上がる", 14, BLUE, True)])
+    point(s, 5.95, "低CAC × 解約率低下 × クロスセルで、倍率は年々改善する")
 
 
 def slide6_scenarios(prs):
     s = new_slide(prs)
-    content_header(s, 6, "軸4 ｜ RISK",
-                   "シナリオ分析による実現可能性（ベースライン vs アップサイド）", size=22)
+    header(s, 6, "軸4｜シナリオ分析による実現可能性（ベースライン vs アップサイド）",
+           "保守的な下限に対し、実効LTVは＋30〜50%の上振れ余地")
 
-    colw, gap, y, h = 3.6, 0.3, 1.95, 4.75
-    # 左2列：シナリオカード
-    specs = [
-        ("ベースライン", "BASE CASE", CARD, NAVY, MUTED,
-         ["解約率 2.0% 固定", "クロスセル なし", "保守的な下限値"]),
-        ("アップサイド", "UPSIDE CASE", BLUE, WHITE, PALE_BLUE,
-         ["初期解約率の低下", "税理士経由のクロスセル", "実効LTV ＋30〜50%"]),
-    ]
-    for i, (title, sub, fill, fg, sub_c, items) in enumerate(specs):
-        x = MARGIN + i * (colw + gap)
-        rect(s, x, y, colw, h, fill, line=BORDER if fill == CARD else None)
-        text(s, x + 0.35, y + 0.35, colw - 0.7, 0.3, sub, size=12, color=sub_c, bold=True)
-        text(s, x + 0.35, y + 0.7, colw - 0.7, 0.5, title, size=22, color=fg, bold=True)
-        for j, item in enumerate(items):
-            iy = y + 1.55 + j * 0.95
-            badge(s, x + 0.35, iy + 0.08, 0.36, "✓", fill=BLUE if fill == CARD else WHITE,
-                  color=WHITE if fill == CARD else BLUE, size=11)
-            text(s, x + 0.9, iy, colw - 1.2, 0.55, item, size=15, color=fg, bold=j == 2,
-                 anchor=MSO_ANCHOR.MIDDLE)
+    tw = 7.6
+    rows = [["項目", "ベースライン", "アップサイド"],
+            ["位置づけ", "保守的な下限値", "ネガティブ・チャーン事例"],
+            ["解約率", "2.0% 固定", "初期解約率が低下"],
+            ["クロスセル", "なし", "税理士経由で進展"],
+            ["実効LTV", "100（基準）", "130〜150（+30〜50%）"]]
+    table(s, MARGIN, BODY_TOP, [1.8, 2.2, tw - 4.0], 0.74, rows, size=15, highlight_col=2)
 
-    # 右：実効LTV比較（シェイプで描く指数バー）
-    vx = MARGIN + 2 * (colw + gap)
+    # 右：実効LTVの比較バー（シェイプ）
+    vx = MARGIN + tw + 0.3
     vw = SLIDE_W - MARGIN - vx
-    rect(s, vx, y, vw, h, CARD, line=BORDER)
-    text(s, vx + 0.35, y + 0.35, vw - 0.7, 0.3, "実効LTV（ベースライン＝100）", size=14, bold=True)
-    base_y = y + h - 0.75
-    unit = 2.45 / 150  # 150 → 2.45in
-    bw = 1.2
-    bx1, bx2 = vx + 0.9, vx + vw - 0.9 - bw
-    # ベースライン 100
-    rect(s, bx1, base_y - 100 * unit, bw, 100 * unit, RGBColor(0x94, 0xA3, 0xB8), rounded=False)
-    text(s, bx1 - 0.2, base_y - 100 * unit - 0.45, bw + 0.4, 0.4, "100", size=18, bold=True,
+    vh = 3.7
+    box(s, vx, BODY_TOP, vw, vh, line=GRAY)
+    text(s, vx + 0.25, BODY_TOP + 0.15, vw - 0.5, 0.3, "実効LTV（ベースライン＝100）", size=13,
+         bold=True)
+    base = BODY_TOP + vh - 0.5
+    unit = 2.3 / 150
+    bw = 1.1
+    b1, b2 = vx + 0.55, vx + vw - 0.55 - bw
+    box(s, b1, base - 100 * unit, bw, 100 * unit, fill=NAVY)
+    box(s, b2, base - 130 * unit, bw, 130 * unit, fill=BLUE)
+    box(s, b2, base - 150 * unit, bw, 20 * unit, fill=GRAY, line=BLUE)
+    text(s, b1 - 0.3, base - 100 * unit - 0.42, bw + 0.6, 0.35, "100", size=18, bold=True,
          align=PP_ALIGN.CENTER)
-    # アップサイド 130（確度高）+ 20（上限まで）
-    rect(s, bx2, base_y - 130 * unit, bw, 130 * unit, BLUE, rounded=False)
-    rect(s, bx2, base_y - 150 * unit, bw, 20 * unit, PALE_BLUE, line=BLUE, rounded=False)
-    text(s, bx2 - 0.3, base_y - 150 * unit - 0.45, bw + 0.6, 0.4, "130〜150", size=18,
+    text(s, b2 - 0.4, base - 150 * unit - 0.42, bw + 0.8, 0.35, "130〜150", size=18,
          color=BLUE, bold=True, align=PP_ALIGN.CENTER)
-    for bx, lab in [(bx1, "ベースライン"), (bx2, "アップサイド")]:
-        text(s, bx - 0.3, base_y + 0.12, bw + 0.6, 0.3, lab, size=12, color=MUTED,
-             align=PP_ALIGN.CENTER)
-    text(s, vx + 0.35, y + 0.75, vw - 0.7, 0.6, "ベースラインを下限に、上振れ余地を提示",
-         size=12, color=MUTED)
+    hline(s, vx + 0.3, base, vx + vw - 0.3, color=NAVY)
+    for bx, lab in [(b1, "ベースライン"), (b2, "アップサイド")]:
+        text(s, bx - 0.3, base + 0.08, bw + 0.6, 0.3, lab, size=12, align=PP_ALIGN.CENTER)
+    point(s, 5.95, "下限で計画を語り、上振れは構造的な余地として示す")
 
 
 def slide7_conclusion(prs):
     s = new_slide(prs)
-    background(s, NAVY)
-    logo(s, LOGO_ON_DARK, SLIDE_W - MARGIN - 1.6, 0.5, 0.45)
-    page_number(s, 7, DARK_MUTED)
-    text(s, MARGIN + 0.1, 0.55, 8, 0.3, "CONCLUSION", size=12, color=BLUE, bold=True)
-    text(s, MARGIN + 0.1, 0.95, 12, 1.4,
-         [("単体SaaSではなく", 22, DARK_MUTED, True),
-          ("「税理士プラットフォーム」としての構造的優位性", 34, WHITE, True)],
-         spacing=1.2)
+    header(s, 7, "結論",
+           "単体SaaSではなく「税理士プラットフォーム」としての構造的優位性", size=22)
 
-    cards = [
-        ("獲得", "低CAC", "税理士チャネルで効率的に獲得"),
-        ("定着", "高い定着性", "業務インフラ化＋税理士CS"),
-        ("拡張", "クロスセル", "同一税理士経由で横展開"),
-        ("結果", "ネガティブ・チャーン", "LTVが時間とともに拡大"),
-    ]
-    gap, y, h = 0.55, 2.95, 2.3
-    x0 = MARGIN + 0.1
-    total = SLIDE_W - MARGIN - x0
-    widths = [2.35, 2.35, 2.35]
-    widths.append(total - sum(widths) - 3 * gap)
-    x = x0
-    for i, ((kw, title, body), w) in enumerate(zip(cards, widths)):
-        last = i == len(cards) - 1
-        rect(s, x, y, w, h, BLUE if last else NAVY_CARD)
-        text(s, x + 0.3, y + 0.3, w - 0.6, 0.35, kw, size=14,
-             color=PALE_BLUE if last else BLUE, bold=True)
-        text(s, x + 0.3, y + 0.75, w - 0.6, 0.5, title, size=18, color=WHITE, bold=True)
-        text(s, x + 0.3, y + 1.4, w - 0.6, 0.7, body, size=13,
-             color=PALE_BLUE if last else DARK_MUTED)
+    cols = [("獲得", "低CAC", "税理士チャネルで効率的に獲得"),
+            ("定着", "高い定着性", "業務インフラ化＋税理士CS"),
+            ("拡張", "クロスセル", "同一税理士経由で横展開"),
+            ("結果", "ネガティブ・チャーン", "LTVが時間とともに拡大")]
+    gap = 0.5
+    w = (CONTENT_W - 3 * gap) / 4
+    for i, (kw, title, body) in enumerate(cols):
+        x = MARGIN + i * (w + gap)
+        last = i == len(cols) - 1
+        box(s, x, BODY_TOP, w, 0.5, fill=BLUE if last else NAVY, lines=kw, size=15,
+            color=WHITE, bold=True, align=PP_ALIGN.CENTER)
+        box(s, x, BODY_TOP + 0.5, w, 1.5, fill=None if last else GRAY,
+            line=BLUE if last else None, pad=0.15,
+            lines=[(title, 16, BLUE if last else NAVY, True), (body, 13, NAVY, False)])
         if not last:
-            arrow(s, x + w + 0.12, y + h / 2 - 0.16, 0.3, 0.32)
-        x += w + gap
+            chevron(s, x + w + 0.11, BODY_TOP + 1.0)
 
-    rect(s, MARGIN + 0.1, 5.75, SLIDE_W - 2 * MARGIN - 0.1, 0.95, NAVY_CARD)
-    text(s, MARGIN + 0.45, 5.75, SLIDE_W - 2 * MARGIN - 0.8, 0.95,
-         "税理士1事務所の獲得が、顧問先×複数プロダクトの収益へ波及",
-         size=18, color=WHITE, bold=True, anchor=MSO_ANCHOR.MIDDLE, align=PP_ALIGN.CENTER)
+    rows = [["比較軸", "単体SaaS", "税理士プラットフォーム"],
+            ["顧客獲得", "1社ずつ個別に獲得", "税理士1事務所から顧問先へ波及"],
+            ["収益の伸び", "1プロダクトに依存", "複数プロダクトで拡大"]]
+    table(s, MARGIN, BODY_TOP + 2.3, [2.4, 3.8, CONTENT_W - 6.2], 0.5, rows, size=14,
+          highlight_col=2)
+    point(s, 5.95, "税理士1事務所の獲得が、顧問先 × 複数プロダクトの収益へ波及")
 
 
 def main():
